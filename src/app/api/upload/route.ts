@@ -41,43 +41,58 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 初始化对象存储
-    const storage = new S3Storage({
-      endpointUrl: process.env.COZE_BUCKET_ENDPOINT_URL,
-      accessKey: "",
-      secretKey: "",
-      bucketName: process.env.COZE_BUCKET_NAME,
-      region: "cn-beijing",
-    });
-
     // 将文件转换为Buffer
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    // 生成文件名
-    const ext = file.name.split(".").pop() || "jpg";
-    const fileName = `boss-custom/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
+    try {
+      // 尝试使用S3存储
+      const storage = new S3Storage({
+        endpointUrl: process.env.COZE_BUCKET_ENDPOINT_URL,
+        accessKey: "",
+        secretKey: "",
+        bucketName: process.env.COZE_BUCKET_NAME,
+        region: "cn-beijing",
+      });
 
-    // 上传文件
-    const fileKey = await storage.uploadFile({
-      fileContent: buffer,
-      fileName: fileName,
-      contentType: file.type,
-    });
+      // 生成文件名
+      const ext = file.name.split(".").pop() || "jpg";
+      const fileName = `boss-custom/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
 
-    // 生成签名URL
-    const imageUrl = await storage.generatePresignedUrl({
-      key: fileKey,
-      expireTime: 86400 * 7, // 7天有效期
-    });
+      // 上传文件
+      const fileKey = await storage.uploadFile({
+        fileContent: buffer,
+        fileName: fileName,
+        contentType: file.type,
+      });
 
-    return NextResponse.json({
-      success: true,
-      data: {
+      // 生成签名URL
+      const imageUrl = await storage.generatePresignedUrl({
         key: fileKey,
-        url: imageUrl,
-      },
-    });
+        expireTime: 86400 * 7, // 7天有效期
+      });
+
+      return NextResponse.json({
+        success: true,
+        data: {
+          key: fileKey,
+          url: imageUrl,
+        },
+      });
+    } catch (s3Error) {
+      console.log("S3存储不可用，使用base64编码返回图片", s3Error);
+      
+      // 使用base64编码作为备选方案
+      const base64Image = `data:${file.type};base64,${buffer.toString("base64")}`;
+      
+      return NextResponse.json({
+        success: true,
+        data: {
+          key: `base64_${Date.now()}`,
+          url: base64Image,
+        },
+      });
+    }
   } catch (error) {
     console.error("上传图片失败:", error);
     return NextResponse.json(
@@ -85,7 +100,9 @@ export async function POST(request: NextRequest) {
         success: false,
         error: "上传图片失败",
       },
-      { status: 500 }
+      {
+        status: 500,
+      }
     );
   }
 }
